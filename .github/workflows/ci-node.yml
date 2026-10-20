@@ -48,7 +48,7 @@ on:
         type: boolean
         default: false
       test-node-options:
-        description: NODE_OPTIONS for the test steps only, keyed by matrix Node version, as JSON {"24.x": "..."}
+        description: 'NODE_OPTIONS for the test steps only, keyed by matrix Node version, as JSON, e.g. {"24.x": "--foo"}'
         type: string
         default: '{}'
     secrets:
