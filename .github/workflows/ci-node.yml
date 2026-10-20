@@ -1,0 +1,131 @@
+name: CI (Node)
+
+# Install, build and test a Node package on a Node × OS matrix.
+# Inputs are commands from the caller's own workflow file; they run through env, never through
+# template expansion inside a script.
+on:
+  workflow_call:
+    inputs:
+      package-manager:
+        description: yarn, npm or pnpm
+        type: string
+        default: yarn
+      pnpm-version:
+        type: string
+        default: '10'
+      node-versions:
+        description: JSON array of Node versions
+        type: string
+        default: '["20.x", "22.x", "24.x"]'
+      os:
+        description: JSON array of runner images
+        type: string
+        default: '["ubuntu-latest"]'
+      primary-node:
+        description: Node version that runs coverage
+        type: string
+        default: 24.x
+      install-command:
+        description: Overrides the default frozen-lockfile install
+        type: string
+        default: ''
+      build-command:
+        type: string
+        default: ''
+      test-command:
+        type: string
+        default: ''
+      coverage-command:
+        description: Runs instead of test-command on the primary Node and Ubuntu
+        type: string
+        default: ''
+      coverage-file:
+        description: lcov file to upload to Qlty when qlty is true
+        type: string
+        default: coverage/lcov.info
+      qlty:
+        description: Upload coverage to Qlty (needs the QLTY_COVERAGE_TOKEN secret)
+        type: boolean
+        default: false
+      test-node-options:
+        description: NODE_OPTIONS for the test steps only, keyed by matrix Node version, as JSON {"24.x": "..."}
+        type: string
+        default: '{}'
+    secrets:
+      QLTY_COVERAGE_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: CI (${{ matrix.os }}, ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+        node-version: ${{ fromJSON(inputs.node-versions) }}
+    env:
+      PM: ${{ inputs.package-manager }}
+      INSTALL_CMD: ${{ inputs.install-command }}
+      BUILD_CMD: ${{ inputs.build-command }}
+      TEST_CMD: ${{ inputs.test-command }}
+      COVER_CMD: ${{ inputs.coverage-command }}
+      IS_PRIMARY: ${{ matrix.node-version == inputs.primary-node && matrix.os == 'ubuntu-latest' }}
+      TEST_NODE_OPTIONS: ${{ fromJSON(inputs.test-node-options)[matrix.node-version] || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        if: inputs.package-manager == 'pnpm'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: ${{ inputs.package-manager }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ -n "$INSTALL_CMD" ]; then bash -c "$INSTALL_CMD"; exit; fi
+          case "$PM" in
+            yarn) yarn install --frozen-lockfile ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            npm) npm ci ;;
+            *) echo "::error::Unknown package-manager: $PM"; exit 1 ;;
+          esac
+
+      - name: Build
+        if: inputs.build-command != ''
+        shell: bash
+        run: bash -c "$BUILD_CMD"
+
+      - name: Test with coverage
+        if: env.IS_PRIMARY == 'true' && inputs.coverage-command != ''
+        shell: bash
+        env:
+          NODE_OPTIONS: ${{ env.TEST_NODE_OPTIONS }}
+        run: bash -c "$COVER_CMD"
+
+      - name: Test
+        if: inputs.test-command != '' && !(env.IS_PRIMARY == 'true' && inputs.coverage-command != '')
+        shell: bash
+        env:
+          NODE_OPTIONS: ${{ env.TEST_NODE_OPTIONS }}
+        run: bash -c "$TEST_CMD"
+
+      - name: Upload coverage
+        if: env.IS_PRIMARY == 'true' && inputs.qlty && inputs.coverage-command != ''
+        uses: qltysh/qlty-action/coverage@c9b09987143d1e4ac955f4803c7bea742102feb5 # v2.4.0
+        with:
+          token: ${{ secrets.QLTY_COVERAGE_TOKEN }}
+          files: ${{ inputs.coverage-file }}

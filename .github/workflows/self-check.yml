@@ -1,0 +1,17 @@
+name: Self check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+
+permissions: {}
+
+jobs:
+  zizmor:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/zizmor.yml
